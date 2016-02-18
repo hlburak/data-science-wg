@@ -1,0 +1,135 @@
+---
+title: "311 sample play"
+author: "Hannah"
+date: "Wednesday, February 10, 2016"
+output: html_document
+---
+
+
+
+```{r,echo=FALSE}
+library(plyr)
+library(dplyr)
+library(ggplot2)
+##change fig height
+##normalize by pop (income dist)
+##Redo to pull from github
+
+#setwd('../Desktop')
+  sample  <- read.csv("cases_sample.csv")
+  
+  acs <- read.csv("ACS_14_5YR_B19301_with_ann.csv",header=TRUE,skip = 1)
+  
+  dfn <- read.csv("ACS_14_5YR_B19301_metadata.csv")
+
+#Cleaning
+    names(acs) <- c("Id", "Census.Block","Geography", "pc_inc2014","pc_inc2014_err")
+        
+  #Calculate case length
+  ##CHECK LATER: Make sure you're converting AM/PM correctly
+    sample$Opened <- strptime(sample$Opened, format="%m/%d/%Y %H:%M:%S %p")
+    sample$Closed <- strptime(sample$Closed, format="%m/%d/%Y %H:%M:%S %p")
+    sample$caselength <- ifelse(sample$Status == 'Closed',
+                                difftime(as.POSIXct(sample$Closed), as.POSIXct(sample$Opened),units="hours"),
+                                "NA") 
+    sample$caselength <- as.numeric(sample$caselength)
+    sample$casedays <- sample$caselength/24
+  
+  #Align merge IDs
+    sample %>% transmute(as.integer(Census.Block))
+  
+  #Merge sample with ACS data
+    income <- join(sample,acs,by = "Census.Block" , type = "left", match = "all")
+
+  #Convert income from factor to numeric first
+    income$pc_inc2014 <- as.numeric(paste(income$pc_inc2014))
+    income$pc_inc2014_err <- as.numeric(paste(income$pc_inc2014_err))
+
+```
+
+```{r, echo=FALSE,fig.height=6, fig.width=8}
+#Standard errors are large
+plot_1 <- ggplot(data=income, aes(x=pc_inc2014, y=abs(pc_inc2014_err))) + geom_point()
+plot_1
+
+#See how factor variables predict income
+
+  lm1 <- lm(pc_inc2014~caselength, data = income)
+  summary(lm1)
+  lm2 <- lm(pc_inc2014~Source, data = income)
+  summary(lm2)
+  lm3 <- lm(pc_inc2014~Neighborhood, data = income)
+  summary(lm3)
+  lm4 <- lm(pc_inc2014~Request.Type, data = income)
+  summary(lm4)
+  
+  lm5 <- lm(pc_inc2014~Neighborhood + Source + Request.Type, data = income)
+  summary(lm5)
+```
+
+As we might expect, neighborhood is a significant predictor of income. Controlling for neighborhood and source, other significant predictors to note:
+    *Request for new street light significantly predicts income at the 5% level with a coefficient of almost $70k.
+    *Request for service from the port authority significantly predicts income at the 10% level with a coefficient of $51k.
+    *Request type other with detail significantly predicts income at the 5% level with a coefficient of $74k.
+    *Customer callback for traffic engineering is negatively and significantly correlated with income.
+    *Complaints to the entertainment commission are negatively and significantly correlated with income.
+    
+    
+```{r}
+##Confirm significant differences in income between factor levels with anova tests
+
+  aov1 = aov(income$pc_inc2014 ~ income$Neighborhood)
+  summary(aov1)
+  
+  aov2 = aov(income$pc_inc2014 ~ income$Source)
+  summary(aov2)
+  
+  aov3 = aov(income$pc_inc2014 ~ income$Responsible.Agency)
+  summary(aov3)
+  
+  aov4 = aov(income$pc_inc2014 ~ income$Request.Type)
+  summary(aov4)
+```
+ The differences in income between factor levels in the Neighborhood, Responsible Agency, Source, and Request Type variables are significant.
+ 
+```{r}
+#Visually confirm that income and caselength not correlated
+  
+  line_1 <- ggplot(data=income, aes(x=pc_inc2014, y=casedays, group=1))
+  line_1 + geom_point(aes(color=factor(Source)))
+
+#Visually show income distribution by source 
+  box_1 <- ggplot(data=income,aes(x=pc_inc2014, fill = Source, color=Source)) 
+  box_1 +  geom_histogram(aes(x=pc_inc2014, fill=Source),binwidth=20000) + facet_wrap( ~ Source, ncol=1)  + geom_density()
+
+#Rich people don't use 311
+  
+  dens_1 <- ggplot(income, aes(x=pc_inc2014)) 
+  dens_1 + geom_density()
+  
+#Visually show income distribution by request type
+  req_fac <- model.matrix(~Request.Type, data = income)
+  factors <- cbind(income[,"pc_inc2014"],req_fac[,3:255])
+
+  plot <- function(fac) {
+      ggplot(data=factors,aes(x=pc_inc2014, fill = fac, color=fac))  +  geom_histogram() 
+                         }
+  collist <- as.list(names(factors))
+  
+#  lapply(collist, plot(fac))
+
+
+
+##could categorize income do chi square test
+##tukey multiple comparison
+
+
+
+```
+
+
+```{r}
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
