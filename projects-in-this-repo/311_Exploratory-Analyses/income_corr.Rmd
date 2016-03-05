@@ -1,26 +1,36 @@
 ---
 title: "311 sample play"
 author: "Hannah"
-date: "Wednesday, February 10, 2016"
+date: "Wednesday, February 24, 2016"
 output: html_document
 ---
 
 
 
-```{r,echo=FALSE}
-library(plyr)
+```{r,echo=FALSE, results='hide',warning=FALSE}
 library(dplyr)
 library(ggplot2)
-##change fig height
-##normalize by pop (income dist)
+library(stargazer)
 ##Redo to pull from github
 
-#setwd('../Desktop')
+setwd("C:/Users/HBurak/Documents/Hannah's stuff/data-science-wg/projects-in-this-repo/311_Exploratory-Analyses")
   sample  <- read.csv("cases_sample.csv")
   
   acs <- read.csv("ACS_14_5YR_B19301_with_ann.csv",header=TRUE,skip = 1)
   
   dfn <- read.csv("ACS_14_5YR_B19301_metadata.csv")
+
+  population <- read.csv("sf_neighborhood-census-profile.csv")
+
+    #sf_fips <- read.csv("C:/Users/HBurak/Downloads/Analysis_Neighborhoods.csv")
+    #names(sf_fips)[names(sf_fips)=="GEOID"] <- "Census.Block"
+  #See if missing FIPS blocks
+    #missingblocks <- join(sample,sf_fips,by="Census.Block", type="full")
+    #tempsample <- sample
+    #tempsample$Census.Block <- as.character(tempsample$Census.Block)
+    #tempsample$Census.Block <- substr(tempsample$Census.Block, 1, nchar(tempsample$Census.Block)-1)
+    #tempsample$Census.Block  <- as.numeric(tempsample$Census.Block)
+    #missingblock <- merge(tempsample,sf_fips,by.x="Census.Block",by.y="Census.Block",all=TRUE)
 
 #Cleaning
     names(acs) <- c("Id", "Census.Block","Geography", "pc_inc2014","pc_inc2014_err")
@@ -39,42 +49,96 @@ library(ggplot2)
     sample %>% transmute(as.integer(Census.Block))
   
   #Merge sample with ACS data
-    income <- join(sample,acs,by = "Census.Block" , type = "left", match = "all")
+    income <- merge(sample,acs,by = "Census.Block" , type = "left", match = "all")
 
-  #Convert income from factor to numeric first
+  #Convert income from factor to numeric and supervisor district to factor
     income$pc_inc2014 <- as.numeric(paste(income$pc_inc2014))
     income$pc_inc2014_err <- as.numeric(paste(income$pc_inc2014_err))
+    income$Supervisor.District <- as.factor(income$Supervisor.District)
+
+    income <- income[,4:30]
+
+  #Create dataset with a weight to normalize by population
+  
+    normal <- join(income,population, by = "Neighborhood", type = "left", match = "all")
+    counts <- as.data.frame(table(normal$Neighborhood))
+    names(counts) <- c("Neighborhood","Frequency")
+    normal <- join(normal,counts, by = "Neighborhood", type = "left", match = "all")
+
+    normal <- normal %>%
+                select(Neighborhood,Total.Pop,Responsible.Agency, Request.Type,Supervisor.District,
+                        Source,Census.Block,caselength,casedays,pc_inc2014,pc_inc2014_err,Frequency,Category) %>%
+                mutate(calldens = Frequency/Total.Pop)
+        
 
 ```
 
-```{r, echo=FALSE,fig.height=6, fig.width=8}
+
+Before we dive into analysis, please note the very large standard errors associated with the income variable.
+```{r,echo=FALSE,fig.height=6, fig.width=8}
 #Standard errors are large
 plot_1 <- ggplot(data=income, aes(x=pc_inc2014, y=abs(pc_inc2014_err))) + geom_point()
 plot_1
 
-#See how factor variables predict income
+```
+##Predicting income
+```{r, echo=FALSE,results='asis'}
 
+#See how factor variables predict income
   lm1 <- lm(pc_inc2014~caselength, data = income)
-  summary(lm1)
+  stargazer(lm1,type="html", style = "aer", title="Using caselength to predict income")
   lm2 <- lm(pc_inc2014~Source, data = income)
-  summary(lm2)
+  stargazer(lm2,type="html", style = "aer", title="Using request source to predict income")
   lm3 <- lm(pc_inc2014~Neighborhood, data = income)
-  summary(lm3)
+  stargazer(lm3,type="html", style = "aer",title="Using neighborhood to predict income")
+      lm_normal <- lm(pc_inc2014~Neighborhood + Total.Pop, data = normal)
+      stargazer(lm_normal,type="html",style = "aer", 
+                title="Using neighborhood to predict income, controlling for neighborhood population")
   lm4 <- lm(pc_inc2014~Request.Type, data = income)
-  summary(lm4)
-  
-  lm5 <- lm(pc_inc2014~Neighborhood + Source + Request.Type, data = income)
-  summary(lm5)
+  stargazer(lm4,type="html", style = "aer",title="Using request type to predict income")
+  lm5 <- lm(pc_inc2014~Supervisor.District, data = income)
+  stargazer(lm5,type="html", style = "aer",title="Using supervisor district to predict income")
+  lm6 <- lm(pc_inc2014~Category, data = income)
+  stargazer(lm6,type="html", style = "aer",title="Using request category to predict income")
+
+#predicting call density with income
+
+  lm11 <- lm(pc_inc2014~calldens,data = normal)
+  stargazer(lm11,type="html",style = "aer",title="Using call density to predict income")
+
 ```
 
-As we might expect, neighborhood is a significant predictor of income. Controlling for neighborhood and source, other significant predictors to note:
-    *Request for new street light significantly predicts income at the 5% level with a coefficient of almost $70k.
-    *Request for service from the port authority significantly predicts income at the 10% level with a coefficient of $51k.
-    *Request type other with detail significantly predicts income at the 5% level with a coefficient of $74k.
-    *Customer callback for traffic engineering is negatively and significantly correlated with income.
-    *Complaints to the entertainment commission are negatively and significantly correlated with income.
+
+```{r,echo=FALSE,results='hide'}
+#probably way too many covariates on these--would be great to categorize on a higher level
+  lm7 <- lm(pc_inc2014~Neighborhood + Source + Responsible.Agency, data = income)
+  stargazer(lm7,type="html",style = "aer",title="Using responsible agency to predict income, controlling for neighborhood and source")
+  lm8 <- lm(pc_inc2014~Neighborhood + Source + Request.Type, data = income)
+  stargazer(lm2,lm3,lm8,type="html",title="Using request type to predict income, controlling for neighborhood and source")
+  lm9 <- lm(pc_inc2014~Neighborhood + Source + Responsible.Agency + Total.Pop , data = normal)
+  stargazer(lm9, type="html", title="Using Neighborhood, source, and responsible agency and total population")
+  lm10 <- lm(pc_inc2014~Neighborhood + Category, data = income)
+  stargazer(lm10,type="html",style = "aer",title="Using category to predict income, controlling for neighborhood")
+
+```
+
+As we might expect, neighborhood is a significant predictor of income and has the most explanatory power for income variation. Other factors we looked at do not have much significance or explanatory power. 
+
+*Controlling for neighborhood and source, a few other significant predictors to note:
+  +Request for new street light significantly predicts income at the 5% level with a coefficient of almost $70k.
+  +Request for service from the port authority significantly predicts income at the 10% level with a coefficient of $51k.
+  +Request type other with detail significantly predicts income at the 5% level with a coefficient of $74k.
+  +Customer callback for traffic engineering is negatively and significantly correlated with income.
+  +Complaints to the entertainment commission are negatively and significantly correlated with income.
+  +A request to the Streetlight Hold Queue agency is significantly correlated with income, but request to Streetlight               Queue is not.
+  +Requests to the Water Waste Queue agency are positively correlated.
     
+    Note: Run in R for full regression tables.
     
+##Differences between factor levels
+
+ The differences in income between factor levels in the Neighborhood, Responsible Agency, Source, and Request Type variables are significant.
+ 
 ```{r}
 ##Confirm significant differences in income between factor levels with anova tests
 
@@ -89,47 +153,80 @@ As we might expect, neighborhood is a significant predictor of income. Controlli
   
   aov4 = aov(income$pc_inc2014 ~ income$Request.Type)
   summary(aov4)
+
+  aov5 = aov(income$pc_inc2014 ~ income$Category)
+  summary(aov5)
+
 ```
- The differences in income between factor levels in the Neighborhood, Responsible Agency, Source, and Request Type variables are significant.
- 
+
+
+##Plots
+
 ```{r}
 #Visually confirm that income and caselength not correlated
-  
+ options(warn=-1) 
+
   line_1 <- ggplot(data=income, aes(x=pc_inc2014, y=casedays, group=1))
   line_1 + geom_point(aes(color=factor(Source)))
+```
 
+```{r,fig.height=12, fig.width=10}
 #Visually show income distribution by source 
-  box_1 <- ggplot(data=income,aes(x=pc_inc2014, fill = Source, color=Source)) 
-  box_1 +  geom_histogram(aes(x=pc_inc2014, fill=Source),binwidth=20000) + facet_wrap( ~ Source, ncol=1)  + geom_density()
 
+  box_1 <- ggplot(data=income,aes(x=pc_inc2014, fill = Source, color=Source)) 
+  box_1 + geom_histogram(aes(x=pc_inc2014, fill=Source),binwidth=20000) + facet_wrap( ~ Source, ncol=1)  + geom_density()
+```
+
+```{r}
 #Rich people don't use 311
   
   dens_1 <- ggplot(income, aes(x=pc_inc2014)) 
-  dens_1 + geom_density()
-  
-#Visually show income distribution by request type
-  req_fac <- model.matrix(~Request.Type, data = income)
-  factors <- cbind(income[,"pc_inc2014"],req_fac[,3:255])
+  dens_1 + ggtitle("Calls by income") + geom_density() 
 
-  plot <- function(fac) {
-      ggplot(data=factors,aes(x=pc_inc2014, fill = fac, color=fac))  +  geom_histogram() 
-                         }
-  collist <- as.list(names(factors))
-  
-#  lapply(collist, plot(fac))
-
-
-
-##could categorize income do chi square test
-##tukey multiple comparison
-
-
+  dens_2 <- ggplot(normal, aes(x=pc_inc2014, fill = calldens)) 
+  dens_2 + ggtitle("Call density by income") + geom_density()
 
 ```
 
+```{r,fig.height=12, fig.width=10}
+#Income varies by supervisor district
+ 
+  box_2 <- ggplot(data=income,aes(x=pc_inc2014, fill = Supervisor.District, color=Supervisor.District)) 
+  box_2 + geom_histogram(aes(x=pc_inc2014, fill=Supervisor.District),binwidth=20000) + 
+        facet_wrap( ~ Supervisor.District, ncol=1)  + geom_density()
+
+```
+
+```{r,fig.height=10, fig.width=10}
+#Call density vs income
+
+  dens_3 <- ggplot(data=normal, aes(x=pc_inc2014,y=calldens))
+  dens_3 + geom_point(aes(color=factor(Supervisor.District))) + guides(fill=FALSE)
+
+options(warn=0)
+
+```
 
 ```{r}
+topcats <- normal[normal$Category,]
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+#Top request categories
+
+ topcats <-  normal %>%
+                select(Category,pc_inc2014) %>%
+                group_by(Category) %>%
+                mutate(count=n()) 
+topcats <- topcats[topcats$count > 180,]
+topcats %>%
+  group_by(Category) %>%
+  summarize(counts=n()) %>%
+  arrange(-counts)
+
+  bar_1 <- ggplot(data=topcats,aes(x=pc_inc2014, fill = Category, color=Category)) 
+  bar_1 + geom_histogram(aes(x=pc_inc2014, fill=Category),binwidth=20000) + facet_wrap( ~ Category, ncol=1)  + geom_density()
+
+
+```
